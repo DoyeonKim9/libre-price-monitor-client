@@ -1,17 +1,48 @@
-# React + Vite
+# Libre2 Price Monitor (Client)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Libre2 온라인 가격 모니터링 대시보드 **프론트엔드(Client)** 레포입니다.  
+네이버/쿠팡 등 채널별 가격 추이, 기준가 이하 판매처 리스트, 셀러 상세 타임라인(증빙 캡처) 조회 기능을 제공합니다.
 
-Currently, two official plugins are available:
+> 이 레포는 **UI(정적 프론트)** 만 포함합니다.  
+> 데이터는 별도 **Server(FastAPI)** 가 제공하는 API를 호출해 화면에 표시합니다.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+---
 
-## React Compiler
+## 핵심 기능
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### 1) 메인 대시보드
+- 채널별 판매가 추이 그래프 (일별/월별 토글)
+- 기준가 이하 판매처 테이블
+- 캡처 썸네일 클릭 → 이미지 확대 모달
+- 필터/설정
+  - 단가 범위(min/max)
+  - 기준가(이하) threshold
+  - 상품명(productName)
+  - 구성옵션(pack: 1/2/3/7개)
 
-## Expanding the ESLint configuration
+### 2) 채널별 주요 셀러
+- 채널 선택 후 주요 셀러 카드 리스트
+- (옵션) 마켓 필터 (예: 쿠팡 로켓배송/마켓플레이스)
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
-# libre-price-monitor-client
+### 3) 셀러 상세
+- 셀러별 수집 타임라인(확인시간/가격/단가/링크/캡처)
+- 그래프(일별/월별) 조회
+
+---
+
+## Tech Stack
+- React (Vite)
+- Recharts
+- TailwindCSS 유틸 클래스 기반 UI  
+  - 프로젝트에 Tailwind 설정이 되어 있어야 UI가 의도대로 렌더링됩니다.
+
+---
+
+## 빠른 시작
+
+### 1) 설치
+```bash
+npm install
+```
+
+
