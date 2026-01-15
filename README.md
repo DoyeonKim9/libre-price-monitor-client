@@ -57,6 +57,8 @@ npm install
 VITE_API_BASE_URL=http://localhost:8000
 ```
 
+> 📖 **자세한 환경 변수 설정 방법**: [ENV_SETUP.md](./ENV_SETUP.md) 문서 참고
+
 ### 3. 개발 서버 실행
 
 ```bash

@@ -34,3 +34,6 @@ venv/
 .env.local
 .env.production.local
 .env.development.local
+
+#설정 파일 가이드
+ENV_SETUP.md
