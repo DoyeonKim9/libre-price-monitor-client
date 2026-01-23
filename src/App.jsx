@@ -1,4 +1,6 @@
-import { useMemo, useState } from "react";
+import { getLatestProducts } from "./api/products";
+import { mapLatestToOffers } from "./api/mappers";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 
 import {
@@ -2299,13 +2301,50 @@ export default function App() {
     productName: "프리스타일 리브레 2",
     packs: [1, 2, 3, 7],
   });
+  const USE_MOCK = import.meta.env.VITE_USE_MOCK === "true";
 
+  const [offersState, setOffersState] = useState(SAMPLE_OFFERS);
+  const [loadingOffers, setLoadingOffers] = useState(false);
+  const [offersError, setOffersError] = useState(null);
+
+  useEffect(() => {
+    if (USE_MOCK) return;
+
+    let alive = true;
+    (async () => {
+      try {
+        setLoadingOffers(true);
+        setOffersError(null);
+
+        const latest = await getLatestProducts();
+        const mapped = mapLatestToOffers(latest);
+
+        if (alive) setOffersState(mapped.length ? mapped : SAMPLE_OFFERS);
+      } catch (e) {
+        if (alive) {
+          setOffersError(e?.message || String(e));
+          // 장애 시 mock으로 fallback
+          setOffersState(SAMPLE_OFFERS);
+        }
+      } finally {
+        if (alive) setLoadingOffers(false);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [USE_MOCK]);
+
+   
+  const offers = offersState;
   const data = useMemo(
-    () => ({ daily: SAMPLE_DAILY_POINTS, monthly: SAMPLE_MONTHLY_POINTS }),
+    () => ({
+      daily: SAMPLE_DAILY_POINTS,
+      monthly: SAMPLE_MONTHLY_POINTS,
+    }),
     []
   );
-
-  const offers = useMemo(() => SAMPLE_OFFERS, []);
 
   // 범위/기준가 유효성 보정(입력 실수 방지)
   const safeSettings = useMemo(() => {
@@ -2368,6 +2407,15 @@ export default function App() {
     <div className="min-h-screen bg-slate-50">
       {header}
       <main className="mx-auto max-w-6xl px-4 py-6">
+      {route.page === "main" && loadingOffers && (
+          <div className="mb-4 text-sm text-slate-500">백엔드 데이터 불러오는 중...</div>
+        )}
+        {route.page === "main" && offersError && (
+          <div className="mb-4 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-700">
+            백엔드 데이터를 불러오지 못해 샘플 데이터를 표시합니다: {offersError}
+          </div>
+        )}
+
         {route.page === "main" && (
           <MainDashboard
             settings={settings}
