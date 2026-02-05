@@ -1984,11 +1984,24 @@ function MainDashboard({
   );
 }
 
-function ChannelSellers({ channelKey, settings, onBack, onSelectSeller }) {
+function ChannelSellers({ channelKey, settings, onBack, onSelectSeller, mallsSummary, mallsTrends }) {
   const [mode, setMode] = useState("daily");
   const [marketFilter, setMarketFilter] = useState("all");
 
-  const sellers = SAMPLE_SELLERS[channelKey] ?? [];
+  // 네이버 채널이고 API 데이터가 있으면 사용, 아니면 mock 데이터
+  const sellers = useMemo(() => {
+    if (channelKey === "naver" && mallsSummary?.data?.length > 0) {
+      return mallsSummary.data.map(mall => ({
+        seller: mall.mall_name,
+        currentConsideredUnitPrice: mall.current_price,
+        last7dRange: mall.change_7d || 0,
+        belowCount: mall.below_target_count || 0,
+        min_price_7d: mall.min_price_7d,
+        max_price_7d: mall.max_price_7d,
+      }));
+    }
+    return SAMPLE_SELLERS[channelKey] ?? [];
+  }, [channelKey, mallsSummary]);
 
   const markets = MARKET_BY_CHANNEL[channelKey] ?? [];
 
@@ -2058,9 +2071,11 @@ function ChannelSellers({ channelKey, settings, onBack, onSelectSeller }) {
               <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
                 기준가 이하:{" "}
                 <span className="font-semibold">
-                  {settings.threshold === ""
-                    ? "-"
-                    : formatKRW(Number(settings.threshold) || 0)}
+                  {mallsSummary?.target_price 
+                    ? formatKRW(mallsSummary.target_price)
+                    : settings.threshold === ""
+                      ? "-"
+                      : formatKRW(Number(settings.threshold) || 0)}
                 </span>
               </div>
             </div>
@@ -2069,11 +2084,19 @@ function ChannelSellers({ channelKey, settings, onBack, onSelectSeller }) {
 
         <div className="col-span-12 lg:col-span-8">
           <Card title="채널 판매가 추이">
-            <SellerPriceTrend
-              mode={mode}
-              sellers={filteredSellers}
-              channelKey={channelKey}
-            />
+            {channelKey === "naver" && mallsTrends?.data?.length > 0 ? (
+              <PriceTrend
+                mode={mode}
+                data={mallsTrends.data}
+                malls={mallsTrends.malls || []}
+              />
+            ) : (
+              <SellerPriceTrend
+                mode={mode}
+                sellers={filteredSellers}
+                channelKey={channelKey}
+              />
+            )}
           </Card>
         </div>
       </div>
@@ -2348,6 +2371,13 @@ export default function App() {
   useEffect(() => {
     async function loadData() {
       setLoading(true);
+      
+      // config 먼저 로드해서 기준가 설정
+      const config = await fetchConfig();
+      if (config.target_price) {
+        setSettings(prev => ({ ...prev, threshold: config.target_price }));
+      }
+      
       const [products, summary, trends, top] = await Promise.all([
         fetchLatestProducts(),
         fetchTrackedMallsSummary(),
@@ -2368,11 +2398,16 @@ export default function App() {
     // API 데이터가 있으면 사용, 없으면 Mock 데이터
     if (mallsTrends.data && mallsTrends.data.length > 0) {
       // API 데이터를 그래프 형식으로 변환
-      const daily = mallsTrends.data.map(item => ({
-        x: item.date,
-        ...item
-      }));
-      return { daily, monthly: SAMPLE_MONTHLY_POINTS, malls: mallsTrends.malls };
+      // mallsTrends.data 형식: [{ x: "02/01", "레디투힐": 82571, "무화당": 95000, ... }, ...]
+      const daily = mallsTrends.data.map(item => {
+        // x 키가 없으면 date 키 사용
+        const dateKey = item.x || item.date;
+        return {
+          x: dateKey,
+          ...item
+        };
+      });
+      return { daily, monthly: SAMPLE_MONTHLY_POINTS, malls: mallsTrends.malls || [] };
     }
     return { daily: SAMPLE_DAILY_POINTS, monthly: SAMPLE_MONTHLY_POINTS, malls: [] };
   }, [mallsTrends]);
@@ -2506,6 +2541,8 @@ export default function App() {
                 sellerName,
               })
             }
+            mallsSummary={mallsSummary}
+            mallsTrends={mallsTrends}
           />
         )}
 
