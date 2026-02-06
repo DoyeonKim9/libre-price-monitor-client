@@ -1566,7 +1566,7 @@ function SingleSellerPriceTrend({ mode, timeline, sellerName, height = 240 }) {
 // -----------------------------
 
 function SettingsPanel({ settings, onChange }) {
-  const { minPrice, maxPrice, threshold, productName, packs } = settings;
+  const { minPrice, maxPrice, threshold, productName } = settings;
 
   return (
     <Card title="설정" className="h-full">
@@ -1665,29 +1665,6 @@ function SettingsPanel({ settings, onChange }) {
           />
           <div className="mt-1 text-xs text-slate-500">
             예: 프리스타일 리브레 2
-          </div>
-        </div>
-
-        <div>
-          <div className="text-sm text-slate-600">판매 구성옵션</div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {[1, 2, 3, 7].map((p) => (
-              <Chip
-                key={p}
-                active={packs.includes(p)}
-                onClick={() => {
-                  const next = packs.includes(p)
-                    ? packs.filter((x) => x !== p)
-                    : [...packs, p];
-                  onChange({ ...settings, packs: next.sort((a, b) => a - b) });
-                }}
-              >
-                {p}개
-              </Chip>
-            ))}
-          </div>
-          <div className="mt-1 text-xs text-slate-500">
-            선택된 옵션만 반영(필터)
           </div>
         </div>
       </div>
