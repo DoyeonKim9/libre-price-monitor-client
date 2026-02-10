@@ -1,6 +1,7 @@
 import {
   getLatestProducts,
   getProductsConfig,
+  getProductsBelowTarget,
   getTrackedMallsSummary,
   getTrackedMallsTrends,
 } from "./api/products";
@@ -9,6 +10,7 @@ import {
   mapConfigToTargetPrice,
   mapSummaryToSellers,
   mapTrendsToChartData,
+  mapBelowTargetToOffers,
 } from "./api/mappers";
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
@@ -1256,16 +1258,26 @@ function SellerPriceTrend({
   // mode: "daily" | "monthly"
   const label = mode === "daily" ? "일별" : "월별";
 
-  // trends API 데이터가 있으면 사용, 없으면 offers에서 생성
+  // trends API 데이터: 이 채널 판매처(sellers)에 해당하는 것만 사용, 없으면 null(다른 채널 데이터 안 보이게)
   const chartDataFromTrends = useMemo(() => {
-    if (!trendsData) return null;
+    if (!trendsData || !sellers?.length) return null;
     const raw =
       typeof trendsData === "object" && trendsData[channelKey]
         ? trendsData[channelKey]
         : trendsData;
     const result = mapTrendsToChartData(raw, channelKey);
-    return result && result.length > 0 ? result : null;
-  }, [trendsData, channelKey]);
+    if (!result || result.length === 0) return null;
+    const channelSellerSet = new Set(sellers.map((s) => s.seller));
+    const filtered = result.map((point) => {
+      const out = { x: point.x };
+      channelSellerSet.forEach((name) => {
+        if (point[name] != null) out[name] = point[name];
+      });
+      return out;
+    });
+    const hasAnySeries = Object.keys(filtered[0] || {}).some((k) => k !== "x");
+    return hasAnySeries ? filtered : null;
+  }, [trendsData, channelKey, sellers]);
 
   // 백엔드 offers 데이터에서 판매처별 일별/월별 데이터 생성 (trendsData 없을 때 fallback)
   const chartDataFromOffers = useMemo(() => {
@@ -1358,6 +1370,21 @@ function SellerPriceTrend({
           .filter((k) => k !== "x")
           .map((seller) => ({ seller }))
       : sellers;
+
+  const hasChartData = chartData.length > 0 && sellersForLines.length > 0;
+
+  if (!hasChartData) {
+    return (
+      <div className="h-[260px]">
+        <div className="mb-2 text-sm text-slate-500">
+          표시 기준: {label} · 값: 판매처별 판매가
+        </div>
+        <div className="flex h-[240px] items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-500">
+          이 채널의 가격 추이 데이터가 없습니다.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-[260px]">
@@ -1777,7 +1804,7 @@ function SettingsPanel({ settings, onChange }) {
                   }
                 }
               }}
-              placeholder="90000"
+              placeholder="85000"
             />
             <span className="text-sm text-slate-500 whitespace-nowrap">원</span>
           </div>
@@ -1848,6 +1875,7 @@ function MainDashboard({
   const [trendMode, setTrendMode] = useState("daily"); // daily/monthly
   const [previewImage, setPreviewImage] = useState(null);
 
+  // 전체 크롤링 목록 중 설정 기준가 이하만 필터링
   const filteredOffers = useMemo(() => {
     const min = Number.isFinite(safeSettings.minPrice)
       ? safeSettings.minPrice
@@ -1861,7 +1889,6 @@ function MainDashboard({
     const packs = safeSettings.packs?.length
       ? safeSettings.packs
       : [1, 2, 3, 7];
-
     return offers
       .filter((o) => o.unitPrice >= min && o.unitPrice <= max)
       .filter((o) => o.unitPrice <= thr)
@@ -1898,7 +1925,7 @@ function MainDashboard({
     };
   }, [offers, safeSettings.threshold]);
 
-  const columns = [
+  const belowTargetColumns = [
     {
       key: "channel",
       header: "채널",
@@ -1982,7 +2009,6 @@ function MainDashboard({
         src={previewImage}
         onClose={() => setPreviewImage(null)}
       />
-
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 lg:col-span-4">
           <SettingsPanel settings={settings} onChange={onChangeSettings} />
@@ -2048,7 +2074,7 @@ function MainDashboard({
       </div>
 
       <Card
-        title="기준가 이하 판매처"
+        title="기준가 이하 상품 목록"
         right={
           <div className="text-sm text-slate-500">
             기준가:{" "}
@@ -2058,7 +2084,11 @@ function MainDashboard({
           </div>
         }
       >
-        <Table columns={columns} rows={filteredOffers} />
+        <Table
+          columns={belowTargetColumns}
+          rows={filteredOffers}
+          emptyText="기준가 이하 상품이 없습니다."
+        />
       </Card>
     </div>
   );
@@ -2296,6 +2326,7 @@ function SellerDetail({
   settings,
   onBackToChannel,
   offers = [],
+  belowTargetOffers = [],
   targetPrice,
 }) {
   const [mode, setMode] = useState("daily");
@@ -2381,6 +2412,14 @@ function SellerDetail({
 
   const key = `${channelKey}::${sellerName}`;
 
+  // 해당 판매처의 기준가 이하 상품만 필터링 (below-target API)
+  const sellerBelowTargetRows = useMemo(() => {
+    const target = (sellerName || "").trim();
+    return (belowTargetOffers || [])
+      .filter((o) => (o.seller || "").trim() === target)
+      .map((o, idx) => ({ ...o, __rowKey: `bt-${key}-${idx}` }));
+  }, [belowTargetOffers, sellerName, key]);
+
   const rows = filteredTimeline
     .slice()
     .sort((a, b) => (a.capturedAt > b.capturedAt ? -1 : 1))
@@ -2436,6 +2475,74 @@ function SellerDetail({
         </a>
       ),
     },
+    {
+      key: "captureThumb",
+      header: "캡처",
+      render: (r) => (
+        <button
+          type="button"
+          onClick={() => setPreviewImage(r.captureThumb)}
+          className="group"
+        >
+          <img
+            src={r.captureThumb}
+            alt="capture"
+            className="h-12 w-20 rounded-lg object-cover border border-slate-200 group-hover:ring-2 group-hover:ring-slate-400"
+          />
+        </button>
+      ),
+    },
+  ];
+
+  const belowTargetColumns = [
+    { key: "productName", header: "상품명" },
+    {
+      key: "price",
+      header: "판매가",
+      render: (r) => (
+        <div className="space-y-1">
+          <div>{formatKRW(r.price)}</div>
+          <div className="text-xs text-slate-500">{r.pack}개</div>
+        </div>
+      ),
+    },
+    {
+      key: "unitPrice",
+      header: "단가(1개)",
+      render: (r) => {
+        const thr =
+          typeof settings.threshold === "string" && settings.threshold === ""
+            ? Infinity
+            : Number(settings.threshold) || Infinity;
+        const diff = thr - r.unitPrice;
+        return (
+          <div className="space-y-1">
+            <div className="font-semibold">{formatKRW(r.unitPrice)}</div>
+            {diff >= 0 ? (
+              <div className="text-xs">
+                <Badge tone="danger">기준가 이하</Badge>
+                <span className="ml-2 text-slate-500">-{formatKRW(diff)}</span>
+              </div>
+            ) : null}
+          </div>
+        );
+      },
+    },
+    {
+      key: "url",
+      header: "링크",
+      render: (r) => (
+        <a
+          className="text-slate-900 underline"
+          href={r.url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          링크
+        </a>
+      ),
+    },
+    { key: "capturedAt", header: "확인 시간" },
     {
       key: "captureThumb",
       header: "캡처",
@@ -2534,6 +2641,26 @@ function SellerDetail({
         </div>
       </div>
 
+      <Card
+        title="기준가 이하 상품 목록"
+        right={
+          <div className="text-sm text-slate-500">
+            기준가:{" "}
+            <span className="font-semibold text-slate-900">
+              {formatKRW(
+                settings.threshold === "" ? 0 : Number(settings.threshold) || 0,
+              )}
+            </span>
+          </div>
+        }
+      >
+        <Table
+          columns={belowTargetColumns}
+          rows={sellerBelowTargetRows}
+          emptyText="해당 판매처의 기준가 이하 상품이 없습니다."
+        />
+      </Card>
+
       <Card title="판매정보 + 캡처본(타임라인)">
         <Table
           columns={columns}
@@ -2560,7 +2687,7 @@ export default function App() {
   const [settings, setSettings] = useState({
     minPrice: 80000,
     maxPrice: 700000,
-    threshold: 90000,
+    threshold: 85000,
     productName: "프리스타일 리브레 2",
     packs: [1, 2, 3, 7],
   });
@@ -2573,6 +2700,7 @@ export default function App() {
   const [configState, setConfigState] = useState(null);
   const [summaryState, setSummaryState] = useState(null);
   const [trendsState, setTrendsState] = useState(null);
+  const [belowTargetState, setBelowTargetState] = useState(null);
 
   useEffect(() => {
     if (USE_MOCK) return;
@@ -2650,14 +2778,34 @@ export default function App() {
     };
   }, [USE_MOCK]);
 
+  useEffect(() => {
+    if (USE_MOCK) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await getProductsBelowTarget();
+        if (alive) setBelowTargetState(res);
+      } catch {
+        if (alive) setBelowTargetState(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [USE_MOCK]);
+
   const offers = offersState;
   const targetPrice = useMemo(
     () => mapConfigToTargetPrice(configState),
     [configState],
   );
+  const belowTargetOffers = useMemo(
+    () => mapBelowTargetToOffers(belowTargetState),
+    [belowTargetState],
+  );
   const summaryByChannel = useMemo(
-    () => mapSummaryToSellers(summaryState),
-    [summaryState],
+    () => mapSummaryToSellers(summaryState, belowTargetOffers),
+    [summaryState, belowTargetOffers],
   );
   const data = useMemo(
     () => ({
@@ -2785,6 +2933,7 @@ export default function App() {
             sellerName={route.sellerName}
             settings={safeSettings}
             offers={offers}
+            belowTargetOffers={belowTargetOffers}
             targetPrice={targetPrice ?? safeSettings.threshold}
             onBackToChannel={() =>
               setRoute({
