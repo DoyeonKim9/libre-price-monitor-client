@@ -2213,7 +2213,7 @@ function SellerDetail({ channelKey, sellerName, settings, onBackToChannel }) {
   const rows = filteredTimeline
     .slice()
     .sort((a, b) => (a.capturedAt > b.capturedAt ? -1 : 1))
-    .map((t, idx) => ({ ...t, __rowKey: `${key}-${idx}` }));
+    .map((t, idx) => ({ ...t, __rowKey: `${channelKey}-${sellerName}-${idx}` }));
 
   const columns = [
     { key: "capturedAt", header: "확인 시간" },
