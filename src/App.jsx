@@ -1,5 +1,15 @@
-import { getLatestProducts } from "./api/products";
-import { mapLatestToOffers } from "./api/mappers";
+import {
+  getLatestProducts,
+  getProductsConfig,
+  getTrackedMallsSummary,
+  getTrackedMallsTrends,
+} from "./api/products";
+import {
+  mapLatestToOffers,
+  mapConfigToTargetPrice,
+  mapSummaryToSellers,
+  mapTrendsToChartData,
+} from "./api/mappers";
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 
@@ -1051,7 +1061,7 @@ function GhostButton({ children, onClick }) {
 // Charts
 // -----------------------------
 
-function PriceTrend({ mode, data, height = 240 }) {
+function PriceTrend({ mode, data, targetPrice, height = 240 }) {
   // mode: "daily" | "monthly"
   const label = mode === "daily" ? "일별" : "월별";
   return (
@@ -1072,6 +1082,16 @@ function PriceTrend({ mode, data, height = 240 }) {
             ticks={[80000, 85000, 90000, 95000]}
             tickFormatter={(value) => value.toLocaleString("ko-KR")}
           />
+          {/* 기준가 기준선 */}
+          {Number.isFinite(targetPrice) && targetPrice > 0 && (
+            <ReferenceLine
+              y={targetPrice}
+              stroke="#ef4444"
+              strokeDasharray="4 4"
+              strokeWidth={2}
+              label={{ value: "기준가", position: "right" }}
+            />
+          )}
           {/* 1,000 단위 점선 구분선 (Y축에 표시되지 않는 값들) */}
           {[
             81000, 82000, 83000, 84000, 86000, 87000, 88000, 89000, 91000,
@@ -1224,39 +1244,125 @@ const SELLER_COLORS = [
   "#84cc16", // 라임색
 ];
 
-function SellerPriceTrend({ mode, sellers, channelKey, height = 240 }) {
+function SellerPriceTrend({
+  mode,
+  sellers,
+  channelKey,
+  offers = [],
+  trendsData = null,
+  targetPrice,
+  height = 240,
+}) {
   // mode: "daily" | "monthly"
   const label = mode === "daily" ? "일별" : "월별";
 
-  // 판매처별 데이터를 하나의 데이터셋으로 통합
-  const dataSource =
-    mode === "daily"
-      ? SAMPLE_SELLER_DAILY_DATA[channelKey] || {}
-      : SAMPLE_SELLER_MONTHLY_DATA[channelKey] || {};
+  // trends API 데이터가 있으면 사용, 없으면 offers에서 생성
+  const chartDataFromTrends = useMemo(() => {
+    if (!trendsData) return null;
+    const raw =
+      typeof trendsData === "object" && trendsData[channelKey]
+        ? trendsData[channelKey]
+        : trendsData;
+    const result = mapTrendsToChartData(raw, channelKey);
+    return result && result.length > 0 ? result : null;
+  }, [trendsData, channelKey]);
 
-  // 모든 날짜/월을 수집
-  const allDates = new Set();
-  sellers.forEach((seller) => {
-    const sellerData = dataSource[seller.seller] || [];
-    sellerData.forEach((d) => allDates.add(d.x));
-  });
-  const sortedDates = Array.from(allDates).sort();
+  // 백엔드 offers 데이터에서 판매처별 일별/월별 데이터 생성 (trendsData 없을 때 fallback)
+  const chartDataFromOffers = useMemo(() => {
+    // 해당 채널의 offers만 필터링
+    const channelOffers = offers.filter((o) => o.channel === channelKey);
 
-  // 통합 데이터 생성
-  const chartData = sortedDates.map((date) => {
-    const point = { x: date };
+    // 판매처별로 그룹화
+    const sellerDataMap = new Map();
     sellers.forEach((seller) => {
-      const sellerData = dataSource[seller.seller] || [];
-      const dataPoint = sellerData.find((d) => d.x === date);
-      point[seller.seller] = dataPoint ? dataPoint.price : null;
+      sellerDataMap.set(seller.seller, []);
     });
-    return point;
-  });
+
+    channelOffers.forEach((offer) => {
+      const sellerName = offer.seller || "-";
+      if (sellerDataMap.has(sellerName)) {
+        sellerDataMap.get(sellerName).push(offer);
+      }
+    });
+
+    // 날짜별/월별로 그룹화
+    const dateMap = new Map();
+
+    sellerDataMap.forEach((offers, sellerName) => {
+      offers.forEach((offer) => {
+        const date = new Date(offer.capturedAt || Date.now());
+        let dateKey;
+
+        if (mode === "daily") {
+          dateKey = `${String(date.getMonth() + 1).padStart(2, "0")}/${String(
+            date.getDate(),
+          ).padStart(2, "0")}`;
+        } else {
+          dateKey = `${date.getMonth() + 1}월`;
+        }
+
+        if (!dateMap.has(dateKey)) {
+          dateMap.set(dateKey, { x: dateKey });
+        }
+
+        const point = dateMap.get(dateKey);
+        // 같은 날짜/월에 여러 데이터가 있으면 평균값 사용
+        if (!point[sellerName]) {
+          point[sellerName] = [];
+        }
+        point[sellerName].push(offer.unitPrice || 0);
+      });
+    });
+
+    // 평균값 계산
+    const result = Array.from(dateMap.values()).map((point) => {
+      const newPoint = { x: point.x };
+      sellers.forEach((seller) => {
+        const prices = point[seller.seller];
+        if (prices && prices.length > 0) {
+          const avg = Math.round(
+            prices.reduce((a, b) => a + b, 0) / prices.length,
+          );
+          newPoint[seller.seller] = avg;
+        } else {
+          newPoint[seller.seller] = null;
+        }
+      });
+      return newPoint;
+    });
+
+    // 날짜순 정렬
+    return result.sort((a, b) => {
+      if (mode === "daily") {
+        // "MM/DD" 형식 비교
+        const [aMonth, aDay] = a.x.split("/").map(Number);
+        const [bMonth, bDay] = b.x.split("/").map(Number);
+        if (aMonth !== bMonth) return aMonth - bMonth;
+        return aDay - bDay;
+      } else {
+        // "N월" 형식 비교
+        const aMonth = parseInt(a.x);
+        const bMonth = parseInt(b.x);
+        return aMonth - bMonth;
+      }
+    });
+  }, [mode, sellers, channelKey, offers]);
+
+  const chartData =
+    chartDataFromTrends && chartDataFromTrends.length > 0
+      ? chartDataFromTrends
+      : chartDataFromOffers;
+  const sellersForLines =
+    chartDataFromTrends && chartDataFromTrends.length > 0
+      ? Object.keys(chartDataFromTrends[0] || {})
+          .filter((k) => k !== "x")
+          .map((seller) => ({ seller }))
+      : sellers;
 
   return (
     <div className="h-[260px]">
       <div className="mb-2 text-sm text-slate-500">
-        표시 기준: {label} · 값: 판매처별 판매가(예시)
+        표시 기준: {label} · 값: 판매처별 판매가
       </div>
       <ResponsiveContainer width="100%" height={height}>
         <LineChart
@@ -1271,6 +1377,16 @@ function SellerPriceTrend({ mode, sellers, channelKey, height = 240 }) {
             ticks={[80000, 85000, 90000, 95000]}
             tickFormatter={(value) => value.toLocaleString("ko-KR")}
           />
+          {/* 기준가 기준선 */}
+          {Number.isFinite(targetPrice) && targetPrice > 0 && (
+            <ReferenceLine
+              y={targetPrice}
+              stroke="#ef4444"
+              strokeDasharray="4 4"
+              strokeWidth={2}
+              label={{ value: "기준가", position: "right" }}
+            />
+          )}
           {/* 1,000 단위 점선 구분선 (Y축에 표시되지 않는 값들) */}
           {[
             81000, 82000, 83000, 84000, 86000, 87000, 88000, 89000, 91000,
@@ -1285,13 +1401,13 @@ function SellerPriceTrend({ mode, sellers, channelKey, height = 240 }) {
             />
           ))}
           <Tooltip
-            content={({ active, payload, label }) => {
+            content={({ active, payload, label: tooltipLabel }) => {
               if (!active || !payload || !payload.length) return null;
 
               return (
                 <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-lg">
                   <div className="mb-2 text-sm font-semibold text-slate-900">
-                    {label}
+                    {tooltipLabel}
                   </div>
                   <div className="space-y-1">
                     {payload
@@ -1347,12 +1463,12 @@ function SellerPriceTrend({ mode, sellers, channelKey, height = 240 }) {
               );
             }}
           />
-          {sellers.map((seller, index) => (
+          {sellersForLines.map((s, index) => (
             <Line
-              key={seller.seller}
+              key={s.seller}
               type="monotone"
-              dataKey={seller.seller}
-              name={seller.seller}
+              dataKey={s.seller}
+              name={s.seller}
               stroke={SELLER_COLORS[index % SELLER_COLORS.length]}
               strokeWidth={2}
               dot={false}
@@ -1364,7 +1480,13 @@ function SellerPriceTrend({ mode, sellers, channelKey, height = 240 }) {
   );
 }
 
-function SingleSellerPriceTrend({ mode, timeline, sellerName, height = 240 }) {
+function SingleSellerPriceTrend({
+  mode,
+  timeline,
+  sellerName,
+  targetPrice,
+  height = 240,
+}) {
   // mode: "daily" | "monthly"
   const label = mode === "daily" ? "일별" : "월별";
 
@@ -1379,7 +1501,7 @@ function SingleSellerPriceTrend({ mode, timeline, sellerName, height = 240 }) {
         const date = new Date(item.capturedAt);
         const dateKey = `${String(date.getMonth() + 1).padStart(
           2,
-          "0"
+          "0",
         )}/${String(date.getDate()).padStart(2, "0")}`;
 
         if (!dailyMap[dateKey]) {
@@ -1403,7 +1525,7 @@ function SingleSellerPriceTrend({ mode, timeline, sellerName, height = 240 }) {
         x: dateKey,
         price: Math.round(
           dailyMap[dateKey].reduce((a, b) => a + b, 0) /
-            dailyMap[dateKey].length
+            dailyMap[dateKey].length,
         ),
       }));
     } else {
@@ -1427,7 +1549,7 @@ function SingleSellerPriceTrend({ mode, timeline, sellerName, height = 240 }) {
           x: monthKey,
           price: Math.round(
             monthlyMap[monthKey].reduce((a, b) => a + b, 0) /
-              monthlyMap[monthKey].length
+              monthlyMap[monthKey].length,
           ),
         }));
     }
@@ -1470,7 +1592,7 @@ function SingleSellerPriceTrend({ mode, timeline, sellerName, height = 240 }) {
     // 1000원 단위로 ticks 생성
     const tickStep = Math.max(
       1000,
-      Math.ceil((yMax - yMin) / 10 / 1000) * 1000
+      Math.ceil((yMax - yMin) / 10 / 1000) * 1000,
     );
     const ticks = [];
     for (let i = yMin; i <= yMax; i += tickStep) {
@@ -1518,6 +1640,16 @@ function SingleSellerPriceTrend({ mode, timeline, sellerName, height = 240 }) {
             ticks={yAxisConfig.ticks}
             tickFormatter={(value) => value.toLocaleString("ko-KR")}
           />
+          {/* 기준가 기준선 */}
+          {Number.isFinite(targetPrice) && targetPrice > 0 && (
+            <ReferenceLine
+              y={targetPrice}
+              stroke="#ef4444"
+              strokeDasharray="4 4"
+              strokeWidth={2}
+              label={{ value: "기준가", position: "right" }}
+            />
+          )}
           {/* 500원 단위 점선 구분선 (Y축에 표시되지 않는 값들) */}
           {yAxisConfig.referenceLines.map((y) => (
             <ReferenceLine
@@ -1707,6 +1839,7 @@ function ImageModal({ open, src, onClose }) {
 function MainDashboard({
   settings,
   safeSettings,
+  targetPrice,
   onChangeSettings,
   onGoChannel,
   data,
@@ -1878,6 +2011,7 @@ function MainDashboard({
             <PriceTrend
               mode={trendMode}
               data={trendMode === "daily" ? data.daily : data.monthly}
+              targetPrice={targetPrice ?? safeSettings.threshold}
             />
             <div className="mt-4 flex flex-wrap gap-2">
               {CHANNELS.map((c) => (
@@ -1930,19 +2064,98 @@ function MainDashboard({
   );
 }
 
-function ChannelSellers({ channelKey, settings, onBack, onSelectSeller }) {
+function ChannelSellers({
+  channelKey,
+  settings,
+  onBack,
+  onSelectSeller,
+  offers = [],
+  summarySellers,
+  trendsData,
+  targetPrice,
+}) {
   const [mode, setMode] = useState("daily");
   const [marketFilter, setMarketFilter] = useState("all");
 
-  const sellers = SAMPLE_SELLERS[channelKey] ?? [];
+  // summary API가 있으면 사용, 없으면 offers에서 추출
+  const sellers = useMemo(() => {
+    const apiSellers = summarySellers?.[channelKey];
+    if (apiSellers && Array.isArray(apiSellers) && apiSellers.length > 0) {
+      return apiSellers;
+    }
+    // 해당 채널의 offers만 필터링
+    const channelOffers = offers.filter((o) => o.channel === channelKey);
 
-  const markets = MARKET_BY_CHANNEL[channelKey] ?? [];
+    // 판매처별로 그룹화하여 통계 계산
+    const sellerMap = new Map();
+
+    channelOffers.forEach((offer) => {
+      const sellerName = (offer.seller || "-").trim();
+      // "-"나 빈 문자열은 제외
+      if (sellerName === "-" || !sellerName) return;
+
+      if (!sellerMap.has(sellerName)) {
+        sellerMap.set(sellerName, {
+          seller: sellerName,
+          offers: [],
+        });
+      }
+      sellerMap.get(sellerName).offers.push(offer);
+    });
+
+    // 각 판매처의 통계 계산
+    const threshold = Number.isFinite(settings.threshold)
+      ? settings.threshold
+      : Infinity;
+
+    return Array.from(sellerMap.values())
+      .map(({ seller, offers: sellerOffers }) => {
+        // 최신 단가 (가장 최근 capturedAt 기준)
+        const sorted = sellerOffers.sort((a, b) =>
+          (b.capturedAt || "").localeCompare(a.capturedAt || ""),
+        );
+        const currentConsideredUnitPrice = sorted[0]?.unitPrice || 0;
+
+        // 최근 7일 변동폭 (단가 범위)
+        const recent7d = sorted.slice(0, 7);
+        const prices = recent7d.map((o) => o.unitPrice).filter((p) => p > 0);
+        const last7dRange =
+          prices.length > 0 ? Math.max(...prices) - Math.min(...prices) : 0;
+
+        // 기준가 이하 횟수
+        const belowCount = sellerOffers.filter(
+          (o) => o.unitPrice <= threshold,
+        ).length;
+
+        return {
+          seller,
+          currentConsideredUnitPrice,
+          last7dRange,
+          belowCount,
+        };
+      })
+      .sort((a, b) => a.seller.localeCompare(b.seller));
+  }, [offers, channelKey, settings.threshold, summarySellers]);
+
+  // 마켓 목록 추출 (offers에서 market 정보 수집)
+  const markets = useMemo(() => {
+    const channelOffers = offers.filter((o) => o.channel === channelKey);
+    const marketSet = new Set();
+    channelOffers.forEach((o) => {
+      if (o.market) marketSet.add(o.market);
+    });
+    return Array.from(marketSet).sort();
+  }, [offers, channelKey]);
 
   const filteredSellers = useMemo(() => {
-    // MVP에서는 marketFilter를 셀러명/채널로만 단순 적용(실데이터 연결 시 판매처의 마켓 정보로 필터)
     if (marketFilter === "all") return sellers;
-    return sellers.filter((s) => s.seller.includes(marketFilter));
-  }, [sellers, marketFilter]);
+    // marketFilter가 있으면 해당 마켓의 판매처만 필터링
+    const channelOffers = offers.filter(
+      (o) => o.channel === channelKey && o.market === marketFilter,
+    );
+    const sellerNames = new Set(channelOffers.map((o) => o.seller));
+    return sellers.filter((s) => sellerNames.has(s.seller));
+  }, [sellers, marketFilter, offers, channelKey]);
 
   return (
     <div className="space-y-6">
@@ -2019,6 +2232,9 @@ function ChannelSellers({ channelKey, settings, onBack, onSelectSeller }) {
               mode={mode}
               sellers={filteredSellers}
               channelKey={channelKey}
+              offers={offers}
+              trendsData={trendsData}
+              targetPrice={targetPrice}
             />
           </Card>
         </div>
@@ -2074,12 +2290,79 @@ function ChannelSellers({ channelKey, settings, onBack, onSelectSeller }) {
   );
 }
 
-function SellerDetail({ channelKey, sellerName, settings, onBackToChannel }) {
+function SellerDetail({
+  channelKey,
+  sellerName,
+  settings,
+  onBackToChannel,
+  offers = [],
+  targetPrice,
+}) {
   const [mode, setMode] = useState("daily");
   const [previewImage, setPreviewImage] = useState(null);
 
-  const key = `${channelKey}::${sellerName}`;
-  const timeline = SAMPLE_SELLER_TIMELINE[key] ?? [];
+  // sellerName이 없으면 빈 화면 반환
+  if (!sellerName || sellerName === "-" || sellerName.trim() === "") {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-2">
+          <GhostButton onClick={onBackToChannel}>← 셀러 목록</GhostButton>
+        </div>
+        <Card title="오류">
+          <div className="text-sm text-slate-600">
+            판매처 정보를 찾을 수 없습니다.
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  // 백엔드 offers 데이터에서 해당 판매처의 타임라인 추출
+  const timeline = useMemo(() => {
+    // 채널과 판매처 이름으로 필터링 (공백 제거 후 비교)
+    const filtered = offers.filter((o) => {
+      const offerChannel = (o.channel || "").trim();
+      const offerSeller = (o.seller || "").trim();
+      const targetSeller = (sellerName || "").trim();
+
+      return (
+        offerChannel === channelKey &&
+        offerSeller === targetSeller &&
+        offerSeller !== "-"
+      );
+    });
+
+    const result = filtered
+      .map((o) => ({
+        capturedAt: o.capturedAt || "-",
+        pack: o.pack || 1,
+        price: o.price || 0,
+        unitPrice: o.unitPrice || 0,
+        url: o.url || "#",
+        captureThumb: o.captureThumb || "/o1.png",
+      }))
+      .sort((a, b) => (b.capturedAt || "").localeCompare(a.capturedAt || ""));
+
+    // 디버깅용 로그 (개발 환경에서만)
+    if (process.env.NODE_ENV === "development" && result.length === 0) {
+      const channelOffers = offers.filter(
+        (o) => (o.channel || "").trim() === channelKey,
+      );
+      const uniqueSellers = [
+        ...new Set(channelOffers.map((o) => (o.seller || "").trim())),
+      ];
+      console.log("SellerDetail Debug:", {
+        channelKey,
+        sellerName,
+        totalOffers: offers.length,
+        channelOffers: channelOffers.length,
+        uniqueSellers,
+        filteredCount: filtered.length,
+      });
+    }
+
+    return result;
+  }, [offers, channelKey, sellerName]);
 
   const sellerAvg = useMemo(() => {
     if (!timeline.length) return null;
@@ -2095,6 +2378,8 @@ function SellerDetail({ channelKey, sellerName, settings, onBackToChannel }) {
         : Number(settings.threshold) || Infinity;
     return timeline.filter((t) => t.unitPrice <= thr);
   }, [timeline, settings.threshold]);
+
+  const key = `${channelKey}::${sellerName}`;
 
   const rows = filteredTimeline
     .slice()
@@ -2243,6 +2528,7 @@ function SellerDetail({ channelKey, sellerName, settings, onBackToChannel }) {
               mode={mode}
               timeline={timeline}
               sellerName={sellerName}
+              targetPrice={targetPrice}
             />
           </Card>
         </div>
@@ -2284,6 +2570,10 @@ export default function App() {
   const [loadingOffers, setLoadingOffers] = useState(false);
   const [offersError, setOffersError] = useState(null);
 
+  const [configState, setConfigState] = useState(null);
+  const [summaryState, setSummaryState] = useState(null);
+  const [trendsState, setTrendsState] = useState(null);
+
   useEffect(() => {
     if (USE_MOCK) return;
 
@@ -2300,7 +2590,6 @@ export default function App() {
       } catch (e) {
         if (alive) {
           setOffersError(e?.message || String(e));
-          // 장애 시 mock으로 fallback
           setOffersState(SAMPLE_OFFERS);
         }
       } finally {
@@ -2313,14 +2602,69 @@ export default function App() {
     };
   }, [USE_MOCK]);
 
-   
+  useEffect(() => {
+    if (USE_MOCK) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await getProductsConfig();
+        if (alive) setConfigState(res);
+      } catch {
+        if (alive) setConfigState(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [USE_MOCK]);
+
+  useEffect(() => {
+    if (USE_MOCK) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await getTrackedMallsSummary();
+        if (alive) setSummaryState(res);
+      } catch {
+        if (alive) setSummaryState(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [USE_MOCK]);
+
+  useEffect(() => {
+    if (USE_MOCK) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await getTrackedMallsTrends();
+        if (alive) setTrendsState(res);
+      } catch {
+        if (alive) setTrendsState(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [USE_MOCK]);
+
   const offers = offersState;
+  const targetPrice = useMemo(
+    () => mapConfigToTargetPrice(configState),
+    [configState],
+  );
+  const summaryByChannel = useMemo(
+    () => mapSummaryToSellers(summaryState),
+    [summaryState],
+  );
   const data = useMemo(
     () => ({
       daily: SAMPLE_DAILY_POINTS,
       monthly: SAMPLE_MONTHLY_POINTS,
     }),
-    []
+    [],
   );
 
   // 범위/기준가 유효성 보정(입력 실수 방지)
@@ -2384,12 +2728,15 @@ export default function App() {
     <div className="min-h-screen bg-slate-50">
       {header}
       <main className="mx-auto max-w-6xl px-4 py-6">
-      {route.page === "main" && loadingOffers && (
-          <div className="mb-4 text-sm text-slate-500">백엔드 데이터 불러오는 중...</div>
+        {route.page === "main" && loadingOffers && (
+          <div className="mb-4 text-sm text-slate-500">
+            백엔드 데이터 불러오는 중...
+          </div>
         )}
         {route.page === "main" && offersError && (
           <div className="mb-4 rounded-xl border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-700">
-            백엔드 데이터를 불러오지 못해 샘플 데이터를 표시합니다: {offersError}
+            백엔드 데이터를 불러오지 못해 샘플 데이터를 표시합니다:{" "}
+            {offersError}
           </div>
         )}
 
@@ -2397,6 +2744,7 @@ export default function App() {
           <MainDashboard
             settings={settings}
             safeSettings={safeSettings}
+            targetPrice={targetPrice ?? safeSettings.threshold}
             onChangeSettings={setSettings}
             onGoChannel={(channelKey) =>
               setRoute({ page: "channel", channelKey, sellerName: "" })
@@ -2410,6 +2758,10 @@ export default function App() {
           <ChannelSellers
             channelKey={route.channelKey}
             settings={safeSettings}
+            offers={offers}
+            summarySellers={summaryByChannel}
+            trendsData={trendsState}
+            targetPrice={targetPrice ?? safeSettings.threshold}
             onBack={() =>
               setRoute({
                 page: "main",
@@ -2432,6 +2784,8 @@ export default function App() {
             channelKey={route.channelKey}
             sellerName={route.sellerName}
             settings={safeSettings}
+            offers={offers}
+            targetPrice={targetPrice ?? safeSettings.threshold}
             onBackToChannel={() =>
               setRoute({
                 page: "channel",
