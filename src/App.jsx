@@ -107,8 +107,8 @@ async function fetchMallTimeline(mallName, days = 30) {
 
 const CHANNELS = [
   { key: "naver", label: "네이버스토어", active: true },
-  { key: "coupang", label: "쿠팡", active: false },  // 준비 중
-  { key: "others", label: "기타(G마켓/옥션)", active: false },  // 준비 중
+  { key: "coupang", label: "쿠팡", active: true },
+  { key: "others", label: "기타(G마켓/옥션)", active: true },
 ];
 
 const MARKET_BY_CHANNEL = {
@@ -1971,10 +1971,10 @@ function MainDashboard({
           <Stat label="네이버" value={`${stats.belowNaver}곳`} />
         </div>
         <div className="col-span-12 md:col-span-3">
-          <Stat label="쿠팡" value="준비 중" sub="크롤링 예정" />
+          <Stat label="쿠팡" value={`${stats.belowCoupang}곳`} />
         </div>
         <div className="col-span-12 md:col-span-3">
-          <Stat label="기타" value="준비 중" sub="크롤링 예정" />
+          <Stat label="기타" value={`${stats.belowOthers}곳`} />
         </div>
       </div>
 
@@ -1995,12 +1995,13 @@ function MainDashboard({
   );
 }
 
-function ChannelSellers({ channelKey, settings, onBack, onSelectSeller, mallsSummary, mallsTrends }) {
+function ChannelSellers({ channelKey, settings, onBack, onSelectSeller, mallsSummary, mallsTrends, offers = [] }) {
   const [mode, setMode] = useState("daily");
   const [marketFilter, setMarketFilter] = useState("all");
 
-  // 네이버 채널이고 API 데이터가 있으면 사용, 아니면 mock 데이터
+  // API 데이터가 있으면 사용, 없으면 offers에서 동적 추출
   const sellers = useMemo(() => {
+    // 네이버: tracked-malls summary API 데이터 사용
     if (channelKey === "naver" && mallsSummary?.data?.length > 0) {
       return mallsSummary.data.map(mall => ({
         seller: mall.mall_name,
@@ -2011,8 +2012,40 @@ function ChannelSellers({ channelKey, settings, onBack, onSelectSeller, mallsSum
         max_price_7d: mall.max_price_7d,
       }));
     }
+
+    // 쿠팡/기타: offers에서 해당 채널의 판매처를 동적 추출
+    const channelOffers = offers.filter(o => o.channel === channelKey);
+    if (channelOffers.length > 0) {
+      const sellerMap = new Map();
+      const threshold = Number(settings.threshold) || Infinity;
+
+      channelOffers.forEach(o => {
+        const name = (o.seller || "").trim();
+        if (!name || name === "-") return;
+        if (!sellerMap.has(name)) {
+          sellerMap.set(name, { prices: [], belowCount: 0 });
+        }
+        const entry = sellerMap.get(name);
+        entry.prices.push(o.unitPrice || 0);
+        if (o.unitPrice <= threshold) entry.belowCount++;
+      });
+
+      return Array.from(sellerMap.entries()).map(([name, data]) => {
+        const prices = data.prices.filter(p => p > 0);
+        const currentPrice = prices[prices.length - 1] || 0;
+        const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
+        const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
+        return {
+          seller: name,
+          currentConsideredUnitPrice: currentPrice,
+          last7dRange: maxPrice - minPrice,
+          belowCount: data.belowCount,
+        };
+      }).sort((a, b) => a.currentConsideredUnitPrice - b.currentConsideredUnitPrice);
+    }
+
     return SAMPLE_SELLERS[channelKey] ?? [];
-  }, [channelKey, mallsSummary]);
+  }, [channelKey, mallsSummary, offers, settings.threshold]);
 
   const markets = MARKET_BY_CHANNEL[channelKey] ?? [];
 
@@ -2456,9 +2489,20 @@ export default function App() {
     }
     
     return productsData.data.map((item, index) => {
-      // 백엔드에서 제공하는 channel, market 사용 (없으면 기본값)
-      const channel = item.channel || "naver";
-      const market = item.market || "스마트스토어";
+      // mall_name 기반 채널 자동 분류 (백엔드가 모든 상품에 channel: "naver"를 붙이므로)
+      const mallName = (item.mall_name || "").trim();
+      let channel = "naver";
+      if (mallName === "쿠팡" || (item.link || "").includes("coupang")) {
+        channel = "coupang";
+      } else if (["11번가", "G마켓", "옥션", "롯데몰"].includes(mallName) || 
+                 (item.link || "").includes("gmarket") || 
+                 (item.link || "").includes("auction") || 
+                 (item.link || "").includes("11st")) {
+        channel = "others";
+      }
+      const market = mallName === "쿠팡" ? "쿠팡" : 
+                     ["11번가", "G마켓", "옥션"].includes(mallName) ? mallName :
+                     item.market || "스마트스토어";
 
       return {
         id: `o${index + 1}`,
@@ -2580,6 +2624,7 @@ export default function App() {
             }
             mallsSummary={mallsSummary}
             mallsTrends={mallsTrends}
+            offers={offers}
           />
         )}
 
