@@ -1963,7 +1963,7 @@ function MainDashboard({
         <div className="col-span-12 md:col-span-3">
           <Stat
             label="기준가 이하(전체)"
-            value={`${stats.belowNaver}곳`}
+            value={`${stats.belowTotal}곳`}
             sub={`마지막 수집: ${stats.lastCollected}`}
           />
         </div>
