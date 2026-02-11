@@ -1,8 +1,16 @@
 function guessChannel(item) {
-  if (item.channel) return item.channel;
+  // mall_name 기반 분류 우선 (백엔드가 모든 상품에 channel: "naver"를 붙이므로)
+  const mallName = (item.mall_name || "").trim();
+  if (mallName === "쿠팡") return "coupang";
+  if (["11번가", "G마켓", "옥션", "롯데몰"].includes(mallName)) return "others";
+
+  // link 기반 분류 (mall_name이 없는 경우)
   const link = (item.link || "").toLowerCase();
-  if (link.includes("smartstore") || link.includes("naver")) return "naver";
   if (link.includes("coupang")) return "coupang";
+  if (link.includes("gmarket") || link.includes("auction") || link.includes("11st")) return "others";
+
+  if (item.channel) return item.channel;
+  if (link.includes("smartstore") || link.includes("naver")) return "naver";
   return "others";
 }
 
