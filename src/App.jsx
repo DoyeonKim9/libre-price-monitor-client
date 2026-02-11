@@ -4,6 +4,7 @@ import {
   getProductsBelowTarget,
   getTrackedMallsSummary,
   getTrackedMallsTrends,
+  getMallTimeline,
 } from "./api/products";
 import {
   mapLatestToOffers,
@@ -2331,6 +2332,8 @@ function SellerDetail({
 }) {
   const [mode, setMode] = useState("daily");
   const [previewImage, setPreviewImage] = useState(null);
+  const [timelineData, setTimelineData] = useState([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
 
   // sellerName이 없으면 빈 화면 반환
   if (!sellerName || sellerName === "-" || sellerName.trim() === "") {
@@ -2348,8 +2351,38 @@ function SellerDetail({
     );
   }
 
-  // 백엔드 offers 데이터에서 해당 판매처의 타임라인 추출
+  // /products/mall/timeline API로 일별 히스토리 데이터 가져오기
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        setTimelineLoading(true);
+        const result = await getMallTimeline(sellerName, 30);
+        if (alive && result?.data?.length > 0) {
+          setTimelineData(result.data.map((item) => ({
+            capturedAt: item.capturedAt || item.date || "-",
+            productName: item.productName || "-",
+            pack: item.pack || 1,
+            price: item.price || 0,
+            unitPrice: item.unitPrice || 0,
+            url: item.url || "#",
+            captureThumb: item.captureThumb || "/o1.png",
+            calcMethod: item.calcMethod || "-",
+          })));
+        }
+      } catch (e) {
+        console.log("Timeline API fallback to offers data:", e?.message);
+      } finally {
+        if (alive) setTimelineLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [sellerName]);
+
+  // timeline API 데이터가 없으면 offers에서 추출 (fallback)
   const timeline = useMemo(() => {
+    if (timelineData.length > 0) return timelineData;
+
     // 채널과 판매처 이름으로 필터링 (공백 제거 후 비교)
     const filtered = offers.filter((o) => {
       const offerChannel = (o.channel || "").trim();
@@ -2363,7 +2396,7 @@ function SellerDetail({
       );
     });
 
-    const result = filtered
+    return filtered
       .map((o) => ({
         capturedAt: o.capturedAt || "-",
         pack: o.pack || 1,
@@ -2373,27 +2406,7 @@ function SellerDetail({
         captureThumb: o.captureThumb || "/o1.png",
       }))
       .sort((a, b) => (b.capturedAt || "").localeCompare(a.capturedAt || ""));
-
-    // 디버깅용 로그 (개발 환경에서만)
-    if (process.env.NODE_ENV === "development" && result.length === 0) {
-      const channelOffers = offers.filter(
-        (o) => (o.channel || "").trim() === channelKey,
-      );
-      const uniqueSellers = [
-        ...new Set(channelOffers.map((o) => (o.seller || "").trim())),
-      ];
-      console.log("SellerDetail Debug:", {
-        channelKey,
-        sellerName,
-        totalOffers: offers.length,
-        channelOffers: channelOffers.length,
-        uniqueSellers,
-        filteredCount: filtered.length,
-      });
-    }
-
-    return result;
-  }, [offers, channelKey, sellerName]);
+  }, [timelineData, offers, channelKey, sellerName]);
 
   const sellerAvg = useMemo(() => {
     if (!timeline.length) return null;
@@ -2662,11 +2675,17 @@ function SellerDetail({
       </Card>
 
       <Card title="판매정보 + 캡처본(타임라인)">
-        <Table
-          columns={columns}
-          rows={rows}
-          emptyText="해당 판매처의 수집 데이터가 없습니다."
-        />
+        {timelineLoading ? (
+          <div className="flex items-center justify-center h-40 text-slate-500">
+            데이터 로딩 중...
+          </div>
+        ) : (
+          <Table
+            columns={columns}
+            rows={rows}
+            emptyText="해당 판매처의 수집 데이터가 없습니다."
+          />
+        )}
       </Card>
     </div>
   );
