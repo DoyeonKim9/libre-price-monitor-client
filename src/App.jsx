@@ -1025,9 +1025,9 @@ function Card({ title, right, children, className = "" }) {
   );
 }
 
-function Stat({ label, value, sub }) {
+function Stat({ label, value, sub, highlight }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className={`rounded-2xl border p-4 shadow-sm transition-all ${highlight ? "border-blue-500 bg-blue-50 ring-2 ring-blue-200" : "border-slate-200 bg-white hover:border-slate-300"}`}>
       <div className="text-sm text-slate-500">{label}</div>
       <div className="mt-1 text-xl font-semibold text-slate-900">{value}</div>
       {sub && <div className="mt-1 text-xs text-slate-500">{sub}</div>}
@@ -1777,6 +1777,7 @@ function MainDashboard({
 }) {
   const [trendMode, setTrendMode] = useState("daily"); // daily/monthly
   const [previewImage, setPreviewImage] = useState(null);
+  const [channelFilter, setChannelFilter] = useState("all"); // all | naver | coupang | others
 
   const filteredOffers = useMemo(() => {
     const min = Number.isFinite(safeSettings.minPrice)
@@ -1793,11 +1794,12 @@ function MainDashboard({
       : [1, 2, 3, 7];
 
     return offers
+      .filter((o) => channelFilter === "all" || o.channel === channelFilter)
       .filter((o) => o.unitPrice >= min && o.unitPrice <= max)
       .filter((o) => o.unitPrice <= thr)
       .filter((o) => packs.includes(o.pack))
       .map((o) => ({ ...o, __rowKey: o.id }));
-  }, [offers, safeSettings]);
+  }, [offers, safeSettings, channelFilter]);
 
   const stats = useMemo(() => {
     const thr = Number.isFinite(safeSettings.threshold)
@@ -1960,26 +1962,27 @@ function MainDashboard({
       </div>
 
       <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12 md:col-span-3">
+        <div className="col-span-12 md:col-span-3 cursor-pointer" onClick={() => setChannelFilter("all")}>
           <Stat
             label="기준가 이하(전체)"
             value={`${stats.belowTotal}곳`}
             sub={`마지막 수집: ${stats.lastCollected}`}
+            highlight={channelFilter === "all"}
           />
         </div>
-        <div className="col-span-12 md:col-span-3">
-          <Stat label="네이버" value={`${stats.belowNaver}곳`} />
+        <div className="col-span-12 md:col-span-3 cursor-pointer" onClick={() => setChannelFilter("naver")}>
+          <Stat label="네이버" value={`${stats.belowNaver}곳`} highlight={channelFilter === "naver"} />
         </div>
-        <div className="col-span-12 md:col-span-3">
-          <Stat label="쿠팡" value={`${stats.belowCoupang}곳`} />
+        <div className="col-span-12 md:col-span-3 cursor-pointer" onClick={() => setChannelFilter("coupang")}>
+          <Stat label="쿠팡" value={`${stats.belowCoupang}곳`} highlight={channelFilter === "coupang"} />
         </div>
-        <div className="col-span-12 md:col-span-3">
-          <Stat label="기타" value={`${stats.belowOthers}곳`} />
+        <div className="col-span-12 md:col-span-3 cursor-pointer" onClick={() => setChannelFilter("others")}>
+          <Stat label="기타" value={`${stats.belowOthers}곳`} highlight={channelFilter === "others"} />
         </div>
       </div>
 
       <Card
-        title="기준가 이하 판매처"
+        title={`기준가 이하 판매처${channelFilter !== "all" ? ` (${channelFilter === "naver" ? "네이버" : channelFilter === "coupang" ? "쿠팡" : "기타"})` : ""}`}
         right={
           <div className="text-sm text-slate-500">
             기준가:{" "}
