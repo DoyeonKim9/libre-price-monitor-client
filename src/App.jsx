@@ -1782,24 +1782,13 @@ function MainDashboard({
   const [channelFilter, setChannelFilter] = useState("all"); // all | naver | coupang | others
 
   const filteredOffers = useMemo(() => {
-    const min = Number.isFinite(safeSettings.minPrice)
-      ? safeSettings.minPrice
-      : 0;
-    const max = Number.isFinite(safeSettings.maxPrice)
-      ? safeSettings.maxPrice
-      : Infinity;
     const thr = Number.isFinite(safeSettings.threshold)
       ? safeSettings.threshold
       : Infinity;
-    const packs = safeSettings.packs?.length
-      ? safeSettings.packs
-      : [1, 2, 3, 7];
 
     return offers
       .filter((o) => channelFilter === "all" || o.channel === channelFilter)
-      .filter((o) => o.unitPrice >= min && o.unitPrice <= max)
       .filter((o) => o.unitPrice <= thr)
-      .filter((o) => packs.includes(o.pack))
       .map((o) => ({ ...o, __rowKey: o.id }));
   }, [offers, safeSettings, channelFilter]);
 
