@@ -2474,7 +2474,7 @@ export default function App() {
       const [products, summary, trends, top] = await Promise.all([
         fetchLatestProducts(),
         fetchTrackedMallsSummary(),
-        fetchTrackedMallsTrends(7),
+        fetchTrackedMallsTrends(90),
         fetchMallsTop(10)
       ]);
       setProductsData(products);
@@ -2490,17 +2490,48 @@ export default function App() {
   const data = useMemo(() => {
     // API 데이터가 있으면 사용, 없으면 Mock 데이터
     if (mallsTrends.data && mallsTrends.data.length > 0) {
+      const mallNames = mallsTrends.malls || [];
       // API 데이터를 그래프 형식으로 변환
-      // mallsTrends.data 형식: [{ x: "02/01", "레디투힐": 82571, "무화당": 95000, ... }, ...]
       const daily = mallsTrends.data.map(item => {
-        // x 키가 없으면 date 키 사용
         const dateKey = item.x || item.date;
-        return {
-          x: dateKey,
-          ...item
-        };
+        return { x: dateKey, ...item };
       });
-      return { daily, monthly: SAMPLE_MONTHLY_POINTS, malls: mallsTrends.malls || [] };
+
+      // 일별 데이터에서 월별 데이터 자동 집계 (월별 최저가)
+      const monthlyMap = {};
+      daily.forEach(item => {
+        // x 형식: "02/05" 또는 "2026-02-05"
+        let monthKey;
+        if (item.x && item.x.includes("/")) {
+          monthKey = item.x.split("/")[0] + "월";
+        } else if (item.x && item.x.includes("-")) {
+          const parts = item.x.split("-");
+          monthKey = parseInt(parts[1], 10) + "월";
+        } else {
+          return;
+        }
+        
+        if (!monthlyMap[monthKey]) {
+          monthlyMap[monthKey] = {};
+        }
+        
+        mallNames.forEach(mall => {
+          if (item[mall] != null) {
+            if (!monthlyMap[monthKey][mall] || item[mall] < monthlyMap[monthKey][mall]) {
+              monthlyMap[monthKey][mall] = item[mall]; // 월별 최저가
+            }
+          }
+        });
+      });
+
+      const monthly = Object.keys(monthlyMap)
+        .sort((a, b) => parseInt(a) - parseInt(b))
+        .map(monthKey => ({
+          x: monthKey,
+          ...monthlyMap[monthKey],
+        }));
+
+      return { daily, monthly, malls: mallNames };
     }
     return { daily: SAMPLE_DAILY_POINTS, monthly: SAMPLE_MONTHLY_POINTS, malls: [] };
   }, [mallsTrends]);
